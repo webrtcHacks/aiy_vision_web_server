@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>View and Draw AIY Vision Detection</title>
+    <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+    <style>
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        canvas{
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index:1
+        }
+    </style>
+</head>
+<body>
+<video id="remoteVideo" autoplay></video>
+<!--script src="https://www.w3schools.com/lib/w3color.js"></script-->
+<script src="static/drawAiyVision.js"></script>
+<script src="static/uv4l.js"></script>
+</body>
+</html>
