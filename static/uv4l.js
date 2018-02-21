@@ -17,8 +17,8 @@ let pc; //make peerConnection object global
 
 function startPeerConnection() {
     const pcConfig = {
-        'iceServers': [{
-            'urls': ['stun:stun.l.google.com:19302']
+        iceServers: [{
+            urls: ["stun:stun.l.google.com:19302"] //ToDo: see if this works, "stun:" + signalling_server_address + ":3478"]
         }]
     };
 

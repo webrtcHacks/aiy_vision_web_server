@@ -22,6 +22,66 @@ capture_height = 922        # Max vertical resolution on PiCam v2 with a 16:9 ra
 # Control connection to the linux socket and send messages to it
 def socket_data(run_event, send_rate):
     socket_path = '/tmp/uv4l-raspidisp.socket'
+
+    # wait for a connection
+    def wait_to_connect():
+        global socket_connected
+
+        print('socket waiting for connection...')
+        while run_event.is_set():
+            try:
+                socket_connected = False
+                connection, client_address = s.accept()
+                print('socket connected')
+                socket_connected = True
+                send_data(connection)
+
+            except socket.timeout:
+                continue
+
+            except socket.error as err:
+                print("socket error: %s" % err)
+                break
+
+        socket_connected = False
+        s.close()
+        print("closing socket")
+        return
+
+    # continually send data as it comes in from the q
+    def send_data(connection):
+        while run_event.is_set():
+            try:
+                if q.qsize() > 0:
+                    message = q.get()
+                    connection.send(str(message).encode())
+
+                sleep(send_rate)
+            except socket.error as err:
+                print("connected socket error: %s" % err)
+                return
+
+    try:
+        os.unlink(socket_path)
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        s.bind(socket_path)
+        s.listen(1)
+        s.settimeout(1)
+    except OSError:
+        if os.path.exists(socket_path):
+            raise
+    except socket.error as err:
+        print("socket error: %s" % err)
+        return
+
+    wait_to_connect()
+
+
+
+# ToDo: delete this
+# Control connection to the linux socket and send messages to it
+def socket_data_old(run_event, send_rate):
+    socket_path = '/tmp/uv4l-raspidisp.socket'
     global socket_connected
 
     try:
@@ -138,15 +198,6 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
                             'width': obj.bounding_box[2] / capture_width,
                             'height': obj.bounding_box[3] / capture_height
                         }
-                        '''
-                        item['name'] = 'object'
-                        item['class_name'] = obj._LABELS[obj.kind]
-                        item['score'] = obj.score
-                        item['x'] = obj.bounding_box[0] / capture_width
-                        item['y'] = obj.bounding_box[1] / capture_height
-                        item['width'] = obj.bounding_box[2] / capture_width
-                        item['height'] = obj.bounding_box[3] / capture_height
-                        '''
 
                         output.numObjects += 1
                         output.objects.append(item)
@@ -166,17 +217,6 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
                             'width': face.bounding_box[2] / capture_width,
                             'height': face.bounding_box[3] / capture_height,
                         }
-                        '''
-                        item['name'] = 'face'
-                        item['score'] = face.face_score
-                        item['joy'] = face.joy_score
-
-                        # convert to percentages
-                        item['x'] = face.bounding_box[0] / capture_width
-                        item['y'] = face.bounding_box[1] / capture_height
-                        item['width'] = face.bounding_box[2] / capture_width
-                        item['height'] = face.bounding_box[3] / capture_height
-                        '''
 
                         output.numObjects += 1
                         output.objects.append(item)

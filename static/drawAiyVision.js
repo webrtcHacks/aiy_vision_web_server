@@ -87,9 +87,9 @@ function setupCanvas() {
     drawCanvas.height = v.videoHeight;
 
     //Some styles for the drawcanvas
-    drawCtx.lineWidth = 4;
+    drawCtx.lineWidth = 8; //4
     drawCtx.strokeStyle = "cyan";
-    drawCtx.font = "16px Verdana";
+    drawCtx.font = "20px Verdana"; //16
     drawCtx.fillStyle = "cyan";
 
     //if no updates in the last 2 seconds then clear the canvas
