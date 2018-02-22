@@ -59,20 +59,19 @@ function startPeerConnection() {
     //Handle datachannel messages
     pc.ondatachannel = (event) => {
         console.log("onDataChannel()");
-        datachannel = event.channel;
+        let dataChannel = event.channel;
 
-        event.channel.onopen = () => console.log("Data Channel opened");
+        dataChannel.onopen = () => console.log("Data Channel opened");
 
-        event.channel.onerror = (error) => console.error("Data Channel Error:", error);
+        dataChannel.onerror = (error) => console.error("Data Channel Error:", error);
 
-        event.channel.onmessage = (event) => {
+        dataChannel.onmessage = (event) => {
             //console.log("DataChannel Message:", event.data);
             processAiyData(JSON.parse(event.data));
         };
 
         event.channel.onclose = () => console.log("The Data Channel is Closed");
     };
-
 
     console.log('Created RTCPeerConnnection');
 
@@ -86,7 +85,6 @@ function startCall() {
 
     //Initialize the peerConnection
     startPeerConnection();
-
 
     //Send the call commmand
     let req = {
@@ -151,7 +149,7 @@ function onOffer(remoteSdp) {
 
 function websocketEvents() {
 
-    ws.onopen = function () {
+    ws.onopen = () => {
         console.log("websocket open");
 
         startCall();
@@ -206,11 +204,11 @@ function stop() {
 
 
 //Exit gracefully
-window.onbeforeunload = function () {
+window.onbeforeunload = () => {
     if (ws) {
         ws.send({log: 'closing browser'});
-        ws.onclose = function () {
-        }; // disable onclose handler first
+        ws.onclose = () => {
+            }; // disable onclose handler first
         stop();
     }
 };
@@ -218,20 +216,20 @@ window.onbeforeunload = function () {
 //////////////////////////
 /*** video handling ***/
 
-document.addEventListener("DOMContentLoaded", (event) => {
+document.addEventListener("DOMContentLoaded", () => {
 
     remoteVideo = document.querySelector('#remoteVideo');
 
     websocketEvents();
 
     remoteVideo.loadend = () => {
-        remoteVideo.addEventListener('loadedmetadata', function () {
+        remoteVideo.addEventListener('loadedmetadata', () => {
             console.log('Remote video videoWidth: ' + this.videoWidth +
                 'px,  videoHeight: ' + this.videoHeight + 'px');
         });
 
 
-        remoteVideo.onresize = function () {
+        remoteVideo.onresize = () => {
             console.log('Remote video size changed to ' +
                 remoteVideo.videoWidth + 'x' + remoteVideo.videoHeight);
         };

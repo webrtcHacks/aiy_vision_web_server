@@ -5,7 +5,7 @@
  */
 
 //Video element selector
-v = document.getElementById("remoteVideo");
+let v = document.getElementById("remoteVideo");
 
 //for starting events
 let isPlaying = false,
@@ -18,7 +18,7 @@ let drawCanvas = document.createElement('canvas');
 document.body.appendChild(drawCanvas);
 let drawCtx = drawCanvas.getContext("2d");
 
-lastSighting = null;
+let lastSighting = null;
 
 //Used to convert RGB color integer values to hex
 //Conversion method from https://www.w3schools.com/lib/w3color.js
@@ -48,7 +48,7 @@ function drawBox(x, y, width, height, label, color) {
 
 
 //Make this global
-processAiyData = (result) => {
+function processAiyData(result) {
     console.log(result);
 
     lastSighting = Date.now();
@@ -58,8 +58,8 @@ processAiyData = (result) => {
 
     result.objects.forEach((item) => {
         if (item.name === "face") {
-            label = "Face: " + Math.round(item.score * 100) + "%" + " Joy: " + Math.round(item.joy * 100) + "%";
-            color = {
+            let label = "Face: " + Math.round(item.score * 100) + "%" + " Joy: " + Math.round(item.joy * 100) + "%";
+            let color = {
                 r: Math.round(item.joy * 255),
                 g: 70,
                 b: Math.round((1 - item.joy) * 255)
@@ -67,7 +67,7 @@ processAiyData = (result) => {
             drawBox(item.x, item.y, item.width, item.height, label, color)
         }
         else if (item.name === "object") {
-            label = item.class_name + " - " + Math.round(item.score * 100) + "%";
+            let label = item.class_name + " - " + Math.round(item.score * 100) + "%";
             drawBox(item.x, item.y, item.width, item.height, label)
         }
         else
