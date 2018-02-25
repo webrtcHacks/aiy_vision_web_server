@@ -3,12 +3,15 @@
  * Adaption of uv4l WebRTC samples to receive only
  */
 
+/*global processAiyData:false*/
+
 const uv4lPort = 9080; //This is determined by the uv4l configuration. 9080 is default set by uv4l-raspidisp-extras
 let protocol = location.protocol === "https:" ? "wss:" : "ws:";
-let signalling_server_address = location.hostname + ':' + uv4lPort;
-let ws = new WebSocket(protocol + '//' + signalling_server_address + '/stream/webrtc');
+let signalling_server_address = location.hostname;
+let ws = new WebSocket(protocol + '//' + signalling_server_address + ':' + uv4lPort + '/stream/webrtc');
 
 let remoteVideo = null;   //make this global, initialize on document ready
+let processAiyData = window.processAiyData;
 
 let pc; //make peerConnection object global
 
@@ -18,13 +21,17 @@ let pc; //make peerConnection object global
 function startPeerConnection() {
     const pcConfig = {
         iceServers: [{
-            urls: ["stun:stun.l.google.com:19302"] //ToDo: see if this works, "stun:" + signalling_server_address + ":3478"]
+            urls: [
+                "stun:stun.l.google.com:19302",
+                "stun:" + signalling_server_address + ":3478"
+            ]
         }]
     };
 
     //Setup our peerConnection object
     pc = new RTCPeerConnection(pcConfig);
 
+    //Send locally generated candidates to the UV4L server
     pc.onicecandidate = (event) => {
         console.log('icecandidate event: ', event);
         if (event.candidate) {
@@ -42,7 +49,7 @@ function startPeerConnection() {
             ws.send(JSON.stringify(req));
 
         } else {
-            console.log('End of candidates.');
+            console.log('End of local candidates.');
         }
     };
 
@@ -100,20 +107,30 @@ function startCall() {
     console.log("Initiating call request" + JSON.stringify(req));
 
 }
-
-
+//Process incoming ICE candidates
+//UV4L does not do Trickle-ICE and sends all candidates at once
+//in a format that adapter.js doesn't like, so regenerate
 //ToDo: Ask why no trickle??
-function onIceCandidates(canidates) {
-    for (candidate in canidates)
-        console.log("Remote ICE candidate: " + candidate);
-    let candidate = new RTCIceCandidate({
-        sdpMLineIndex: candidate.sdpMLineIndex, //no label
-        candidate: message.candidate
-    });
+function onIceCandidates(remoteCandidates) {
 
-    pc.addIceCandidate(candidate)
-        .then(() => console.log("Added ICE candidate"),
-            (err) => console.log("Error adding candidate"));
+    function onAddIceCandidateSuccess() {
+        console.log("Successfully added ICE candidate")
+    }
+
+    function onAddIceCandidateError(err) {
+        console.error("Failed to add candidate: " + err)
+    }
+
+    remoteCandidates.forEach((candidate) => {
+        let generatedCandidate = new RTCIceCandidate({
+            sdpMLineIndex: candidate.sdpMLineIndex,
+            candidate: candidate.candidate,
+            sdpMid: candidate.sdpMid
+        });
+        console.log("Created ICE candidate: " + JSON.stringify(generatedCandidate));
+        pc.addIceCandidate(generatedCandidate)
+            .then(onAddIceCandidateSuccess, onAddIceCandidateError);
+    });
 }
 
 function onOffer(remoteSdp) {
@@ -121,22 +138,23 @@ function onOffer(remoteSdp) {
         .then(() => console.log("setRemoteDescription complete"),
             (err) => console.error("Failed to setRemoteDescription: " + err));
 
-    pc.createAnswer().then(
-        (localSdp) => {
-            pc.setLocalDescription(localSdp)
-                .then(() => console.log("setLocalDescription complete"),
-                    (err) => console.error("setLocalDescription error:" + err));
+    pc.createAnswer()
+        .then(
+            (localSdp) => {
+                pc.setLocalDescription(localSdp)
+                    .then(() => console.log("setLocalDescription complete"),
+                        (err) => console.error("setLocalDescription error:" + err));
 
-            let req = {
-                what: "answer",
-                data: JSON.stringify(localSdp)
-            };
-            ws.send(JSON.stringify(req));
-            console.log("Sending local SDP: " + JSON.stringify(localSdp));
-        },
-        (error) =>
-            console.log('Failed to create session description: ' + error.toString())
-    );
+                let req = {
+                    what: "answer",
+                    data: JSON.stringify(localSdp)
+                };
+                ws.send(JSON.stringify(req));
+                console.log("Sending local SDP: " + JSON.stringify(localSdp));
+            },
+            (err) =>
+                console.log('Failed to create session description: ' + err.toString())
+        );
 
     console.log("telling uv4l-server to generate IceCandidates");
     ws.send(JSON.stringify({what: "generateIceCandidates"}));
@@ -163,7 +181,7 @@ function websocketEvents() {
         //console.log("type=" + msg.type);
 
         if (message.what === 'undefined') {
-            console.error("No websocket message");
+            console.error("Websocket message not defined");
             return;
         }
 
@@ -172,14 +190,14 @@ function websocketEvents() {
                 onOffer(JSON.parse(message.data));
                 break;
 
-            case "geticecandidate":
-                onIceCandidates(message);
+            case "iceCandidates":
+                onIceCandidates(JSON.parse(message.data));
                 break;
         }
     };
 
-    ws.onerror = (error) => {
-        console.error("Websocket error: " + error.toString());
+    ws.onerror = (err) => {
+        console.error("Websocket error: " + err.toString());
     };
 
 }
@@ -208,7 +226,7 @@ window.onbeforeunload = () => {
     if (ws) {
         ws.send({log: 'closing browser'});
         ws.onclose = () => {
-            }; // disable onclose handler first
+        }; // disable onclose handler first
         stop();
     }
 };
