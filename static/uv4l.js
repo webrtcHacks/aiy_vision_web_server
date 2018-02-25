@@ -10,10 +10,9 @@ let protocol = location.protocol === "https:" ? "wss:" : "ws:";
 let signalling_server_address = location.hostname;
 let ws = new WebSocket(protocol + '//' + signalling_server_address + ':' + uv4lPort + '/stream/webrtc');
 
-let remoteVideo = null;   //make this global, initialize on document ready
-let processAiyData = window.processAiyData;
-
-let pc; //make peerConnection object global
+//Global vars
+let remoteVideo = null;
+let pc, dataChannel;
 
 //////////////////////////
 /*** Peer Connection ***/
@@ -31,28 +30,7 @@ function startPeerConnection() {
     //Setup our peerConnection object
     pc = new RTCPeerConnection(pcConfig);
 
-    //Send locally generated candidates to the UV4L server
-    pc.onicecandidate = (event) => {
-        console.log('icecandidate event: ', event);
-        if (event.candidate) {
-            let candidate = {
-                sdpMLineIndex: event.candidate.sdpMLineIndex,
-                sdpMid: event.candidate.sdpMid,
-                candidate: event.candidate.candidate
-            };
-
-            let req = {
-                what: "addIceCandidate",
-                data: JSON.stringify(candidate)
-            };
-
-            ws.send(JSON.stringify(req));
-
-        } else {
-            console.log('End of local candidates.');
-        }
-    };
-
+    //Start video
     pc.ontrack = (event) => {
         if (remoteVideo.srcObject !== event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
@@ -61,12 +39,15 @@ function startPeerConnection() {
         }
     };
 
-    pc.onremovestream = (event) => console.log('Remote stream removed. Event: ', event);
+    pc.onremovestream = (event) => {
+        console.log('Remote stream removed. Event: ', event);
+        remoteVideo.stop();
+    };
 
     //Handle datachannel messages
     pc.ondatachannel = (event) => {
         console.log("onDataChannel()");
-        let dataChannel = event.channel;
+        dataChannel = event.channel;
 
         dataChannel.onopen = () => console.log("Data Channel opened");
 
@@ -77,7 +58,7 @@ function startPeerConnection() {
             processAiyData(JSON.parse(event.data));
         };
 
-        event.channel.onclose = () => console.log("The Data Channel is Closed");
+        dataChannel.onclose = () => console.log("The Data Channel is Closed");
     };
 
     console.log('Created RTCPeerConnnection');
@@ -97,7 +78,6 @@ function startCall() {
     let req = {
         what: "call",
         options: {
-            //ToDo: Figure out why Chrome mobile H.264 flag doesn't work
             force_hw_vcodec: true,
             vformat: 55
         }
