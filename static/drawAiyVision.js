@@ -4,6 +4,9 @@
  * Written for webrtcHacks - https://webrtchacks.com
  */
 
+/*exported processAiyData*/
+
+
 //Video element selector
 let v = document.getElementById("remoteVideo");
 
@@ -20,15 +23,14 @@ let drawCtx = drawCanvas.getContext("2d");
 
 let lastSighting = null;
 
-//Used to convert RGB color integer values to hex
-//Conversion method from https://www.w3schools.com/lib/w3color.js
+//Convert RGB color integer values to hex
 function toHex(n) {
-    let hex = n.toString(16);
-    while (hex.length < 2) {
-        hex = "0" + hex;
+    if (n < 256) {
+        return Math.abs(n).toString(16);
     }
-    return hex;
+    return 0;
 }
+
 
 //draw boxes and labels on each detected object
 function drawBox(x, y, width, height, label, color) {
@@ -47,7 +49,7 @@ function drawBox(x, y, width, height, label, color) {
 }
 
 
-//Make this global
+//Main function to export
 function processAiyData(result) {
     console.log(result);
 
@@ -74,7 +76,7 @@ function processAiyData(result) {
             console.log("I don't know what that AIY Vision server response was");
     });
 
-};
+}
 
 
 //Start object detection
@@ -82,14 +84,14 @@ function setupCanvas() {
 
     console.log("Ready to draw");
 
-    //Set canvas sizes base don input video
+    //Set canvas sizes based on input video
     drawCanvas.width = v.videoWidth;
     drawCanvas.height = v.videoHeight;
 
-    //Some styles for the drawcanvas
-    drawCtx.lineWidth = 8; //4
+    //Some styles for the drawCanvas
+    drawCtx.lineWidth = 8;
     drawCtx.strokeStyle = "cyan";
-    drawCtx.font = "20px Verdana"; //16
+    drawCtx.font = "20px Verdana";
     drawCtx.fillStyle = "cyan";
 
     //if no updates in the last 2 seconds then clear the canvas

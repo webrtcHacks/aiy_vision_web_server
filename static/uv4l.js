@@ -6,8 +6,8 @@
 /*global processAiyData:false*/
 
 const uv4lPort = 9080; //This is determined by the uv4l configuration. 9080 is default set by uv4l-raspidisp-extras
-let protocol = location.protocol === "https:" ? "wss:" : "ws:";
-let signalling_server_address = location.hostname;
+const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+const signalling_server_address = location.hostname;
 let ws = new WebSocket(protocol + '//' + signalling_server_address + ':' + uv4lPort + '/stream/webrtc');
 
 //Global vars
@@ -17,11 +17,11 @@ let pc, dataChannel;
 //////////////////////////
 /*** Peer Connection ***/
 
-function startPeerConnection() {
+function setupPeerConnection() {
     const pcConfig = {
         iceServers: [{
             urls: [
-                "stun:stun.l.google.com:19302",
+                //"stun:stun.l.google.com:19302",
                 "stun:" + signalling_server_address + ":3478"
             ]
         }]
@@ -34,8 +34,8 @@ function startPeerConnection() {
     pc.ontrack = (event) => {
         if (remoteVideo.srcObject !== event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
-            remoteVideo.play();
-            console.log('Remote stream added.');
+            remoteVideo.play()
+                .then(() => console.log('Remote stream added.'));
         }
     };
 
@@ -72,7 +72,7 @@ function startPeerConnection() {
 function startCall() {
 
     //Initialize the peerConnection
-    startPeerConnection();
+    setupPeerConnection();
 
     //Send the call commmand
     let req = {
@@ -90,7 +90,6 @@ function startCall() {
 //Process incoming ICE candidates
 //UV4L does not do Trickle-ICE and sends all candidates at once
 //in a format that adapter.js doesn't like, so regenerate
-//ToDo: Ask why no trickle??
 function onIceCandidates(remoteCandidates) {
 
     function onAddIceCandidateSuccess() {
@@ -113,6 +112,7 @@ function onIceCandidates(remoteCandidates) {
     });
 }
 
+//Handle Offer/Answer exchange
 function onOffer(remoteSdp) {
     pc.setRemoteDescription(new RTCSessionDescription(remoteSdp))
         .then(() => console.log("setRemoteDescription complete"),
@@ -157,15 +157,15 @@ function websocketEvents() {
     /*** Signaling logic ***/
     ws.onmessage = (event) => {
         let message = JSON.parse(event.data);
-        console.log("message=" + JSON.stringify(message));
-        //console.log("type=" + msg.type);
+        console.log("Incoming message:" + JSON.stringify(message));
 
-        if (message.what === 'undefined') {
-            console.error("Websocket message not defined");
-            return;
+        if (!message.what) {
+                console.error("Websocket message not defined");
+                return;
         }
 
         switch (message.what) {
+
             case "offer":
                 onOffer(JSON.parse(message.data));
                 break;
@@ -173,6 +173,9 @@ function websocketEvents() {
             case "iceCandidates":
                 onIceCandidates(JSON.parse(message.data));
                 break;
+
+            default:
+                console.warn("Unhandled websocket message: " + message.what)
         }
     };
 
@@ -180,34 +183,28 @@ function websocketEvents() {
         console.error("Websocket error: " + err.toString());
     };
 
+    ws.onclose = () => {
+        console.log("Websocket closed.");
+        };
+
 }
 
 ////////////////////////////////
 /*** General control logic ***/
 
-
-//Close & clean-up everything
-function stop() {
-
+//Exit gracefully
+window.onbeforeunload = () => {
     remoteVideo.src = '';
+
     if (pc) {
         pc.close();
         pc = null;
     }
-    if (ws) {
-        ws.close();
-        ws = null;
-    }
-}
 
-
-//Exit gracefully
-window.onbeforeunload = () => {
     if (ws) {
         ws.send({log: 'closing browser'});
-        ws.onclose = () => {
-        }; // disable onclose handler first
-        stop();
+        ws.close();
+        ws = null;
     }
 };
 
