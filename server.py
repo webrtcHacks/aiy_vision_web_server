@@ -69,6 +69,11 @@ def socket_data(run_event, send_rate):
         s.settimeout(1)
     except OSError:
         if os.path.exists(socket_path):
+            print("Error accessing %s\nTry running 'sudo chown pi: %s'" % (socket_path, socket_path))
+            os._exit(0)
+            return
+        else:
+            print("Socket file not found. Did you configure uv4l-raspidisp to use %s?" % socket_path)
             raise
     except socket.error as err:
         print("socket error: %s" % err)
@@ -76,65 +81,7 @@ def socket_data(run_event, send_rate):
 
     wait_to_connect()
 
-
-
-# ToDo: delete this
-# Control connection to the linux socket and send messages to it
-def socket_data_old(run_event, send_rate):
-    socket_path = '/tmp/uv4l-raspidisp.socket'
-    global socket_connected
-
-    try:
-        os.unlink(socket_path)
-    except OSError:
-        if os.path.exists(socket_path):
-            raise
-
-    with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as s:
-        s.bind(socket_path)
-        s.listen(1)
-        s.settimeout(1)
-
-        print('socket waiting for connection...')
-
-        while run_event.is_set():
-            try:
-                connection, client_address = s.accept()  # ToDo: findout why the client_address doesn't populate
-
-                print('socket connected')
-                socket_connected = True
-
-                # ToDo: this does not exit cleanly if we don't get to this point
-
-                while run_event.is_set():
-
-                    if q.qsize() > 0:
-                        message = q.get()
-                        connection.send(str(message).encode())
-
-                    sleep(send_rate)
-
-            # break the inner loop on polling timeout and start over
-            except socket.timeout:
-                print("socket timeout")
-                sleep(1)
-                continue
-
-            # On error assume the far end detached and start over
-            except socket.error as err:
-                print("socket error: %s" % err)
-                socket_connected = False
-                s.detach()
-                s.bind(socket_path)
-                print('Detached. Socket waiting for new connection...')
-                continue
-
-        socket_connected = False
-        s.detach()
-        return
-
-
-# added to put object in JSON
+# helper class to convert inference output to JSON
 class Object(object):
     def __init__(self):
         self.name = "webrtcHacks AIY Vision Server REST API"
@@ -159,7 +106,7 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
         elif model == "face":
             tf_model = face_detection.model()
         else:
-            print("No model or invalid model specified - exiting..")
+            print("No tensorflow model or invalid model specified - exiting..")
             camera.stop_preview()
             os._exit(0)
             return
@@ -234,7 +181,7 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
                     if socket_connected is True:
                         q.put(output_json)
 
-                # Just for tests to improve inference time / CPU usage
+                # Additional data to measure inference time
                 # time_log.append(output.inferenceTime)
                 # print("Avg inference time: %s" % (sum(time_log)/len(time_log)))
 
@@ -261,7 +208,7 @@ def ping():
 # Main control logic to parse args and spawn threads
 def main(webserver):
 
-    # Command line parameters to help with testing
+    # Command line parameters to help with testing and optimization
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--model',
@@ -302,10 +249,11 @@ def main(webserver):
     is_running = Event()
     is_running.set()
 
-    # run this ahead of a flask connection so we can test it with the uv4l console
+    # run this independent of a flask connection so we can test it with the uv4l console
     socket_thread = Thread(target=socket_data, args=(is_running, 1 / args.framerate,))
     socket_thread.start()
 
+    # thread for running AIY Tensorflow inference
     detection_thread = Thread(target=run_inference,
                               args=(is_running, args.model, args.framerate, args.cam_mode, args.hres, args.vres,))
     detection_thread.start()

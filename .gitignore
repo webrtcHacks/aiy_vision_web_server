@@ -1,9 +1,3 @@
-.gitignore
-
-# IntelliJ project files
-.idea
-*.iml
-out
-gen
-
+# Created by .ignore support plugin (hsz.mobi)
 .eslintrc.json
+.idea/
