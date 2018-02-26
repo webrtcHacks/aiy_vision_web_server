@@ -23,14 +23,13 @@ let drawCtx = drawCanvas.getContext("2d");
 
 let lastSighting = null;
 
-//Cgit onvert RGB color integer values to hex
+//Convert RGB color integer values to hex
 function toHex(n) {
     if (n < 256) {
         return Math.abs(n).toString(16);
     }
     return 0;
 }
-
 
 //draw boxes and labels on each detected object
 function drawBox(x, y, width, height, label, color) {
