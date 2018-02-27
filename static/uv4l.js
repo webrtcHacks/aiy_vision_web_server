@@ -12,7 +12,8 @@ let ws = new WebSocket(protocol + '//' + signalling_server_address + ':' + uv4lP
 
 //Global vars
 let remoteVideo = null;
-let pc, dataChannel;
+let pc,
+    dataChannel;
 
 //////////////////////////
 /*** Peer Connection ***/
@@ -46,12 +47,12 @@ function setupPeerConnection() {
 
     //Handle datachannel messages
     pc.ondatachannel = (event) => {
-        console.log("onDataChannel()");
+
         dataChannel = event.channel;
 
         dataChannel.onopen = () => console.log("Data Channel opened");
 
-        dataChannel.onerror = (error) => console.error("Data Channel Error:", error);
+        dataChannel.onerror = (err) => console.error("Data Channel Error:", err);
 
         dataChannel.onmessage = (event) => {
             //console.log("DataChannel Message:", event.data);
@@ -87,6 +88,7 @@ function startCall() {
     console.log("Initiating call request" + JSON.stringify(req));
 
 }
+
 //Process incoming ICE candidates
 //UV4L does not do Trickle-ICE and sends all candidates at once
 //in a format that adapter.js doesn't like, so regenerate
@@ -113,31 +115,42 @@ function onIceCandidates(remoteCandidates) {
 }
 
 //Handle Offer/Answer exchange
-function onOffer(remoteSdp) {
+function offerAnswer(remoteSdp) {
+
+    //Start the answer by setting the remote SDP
     pc.setRemoteDescription(new RTCSessionDescription(remoteSdp))
-        .then(() => console.log("setRemoteDescription complete"),
+        .then(() => {
+                console.log("setRemoteDescription complete");
+
+                //Create the local SDP
+                pc.createAnswer()
+                    .then(
+                        (localSdp) => {
+                            pc.setLocalDescription(localSdp)
+                                .then(() => {
+                                        console.log("setLocalDescription complete");
+
+                                        //send the answer
+                                        let req = {
+                                            what: "answer",
+                                            data: JSON.stringify(localSdp)
+                                        };
+                                        ws.send(JSON.stringify(req));
+                                        console.log("Sent local SDP: " + JSON.stringify(localSdp));
+
+                                    },
+                                    (err) => console.error("setLocalDescription error:" + err));
+                        },
+                        (err) =>
+                            console.log('Failed to create session description: ' + err.toString())
+                    );
+            },
             (err) => console.error("Failed to setRemoteDescription: " + err));
 
-    pc.createAnswer()
-        .then(
-            (localSdp) => {
-                pc.setLocalDescription(localSdp)
-                    .then(() => console.log("setLocalDescription complete"),
-                        (err) => console.error("setLocalDescription error:" + err));
-
-                let req = {
-                    what: "answer",
-                    data: JSON.stringify(localSdp)
-                };
-                ws.send(JSON.stringify(req));
-                console.log("Sending local SDP: " + JSON.stringify(localSdp));
-            },
-            (err) =>
-                console.log('Failed to create session description: ' + err.toString())
-        );
-
+    //Now ask for ICE candidates
     console.log("telling uv4l-server to generate IceCandidates");
     ws.send(JSON.stringify({what: "generateIceCandidates"}));
+
 
 }
 
@@ -160,14 +173,14 @@ function websocketEvents() {
         console.log("Incoming message:" + JSON.stringify(message));
 
         if (!message.what) {
-                console.error("Websocket message not defined");
-                return;
+            console.error("Websocket message not defined");
+            return;
         }
 
         switch (message.what) {
 
             case "offer":
-                onOffer(JSON.parse(message.data));
+                offerAnswer(JSON.parse(message.data));
                 break;
 
             case "iceCandidates":
@@ -175,7 +188,7 @@ function websocketEvents() {
                 break;
 
             default:
-                console.warn("Unhandled websocket message: " + message.what)
+                console.warn("Unhandled websocket message: " + JSON.stringify(message))
         }
     };
 
@@ -185,7 +198,7 @@ function websocketEvents() {
 
     ws.onclose = () => {
         console.log("Websocket closed.");
-        };
+    };
 
 }
 
