@@ -151,7 +151,6 @@ function offerAnswer(remoteSdp) {
     console.log("telling uv4l-server to generate IceCandidates");
     ws.send(JSON.stringify({what: "generateIceCandidates"}));
 
-
 }
 
 
@@ -216,6 +215,7 @@ window.onbeforeunload = () => {
 
     if (ws) {
         ws.send({log: 'closing browser'});
+        ws.send(JSON.stringify({what: "hangup"}));
         ws.close();
         ws = null;
     }

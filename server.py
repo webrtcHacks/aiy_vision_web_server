@@ -6,7 +6,8 @@ import json
 import queue
 import argparse
 
-from aiy._drivers._rgbled import PrivacyLED
+from aiy.vision.leds import Leds
+from aiy.vision.leds import PrivacyLed #ToDo: comment on this
 from aiy.vision.inference import CameraInference
 from aiy.vision.models import object_detection, face_detection
 from picamera import PiCamera
@@ -43,10 +44,9 @@ def socket_data(run_event, send_rate):
                 print("socket error: %s" % err)
                 break
 
-        socket_connected = False
-        s.close()
         print("closing socket")
-        return
+        s.close()
+        socket_connected = False
 
     # continually send data as it comes in from the q
     def send_data(connection):
@@ -67,6 +67,7 @@ def socket_data(run_event, send_rate):
         s.bind(socket_path)
         s.listen(1)
         s.settimeout(1)
+        wait_to_connect()
     except OSError:
         if os.path.exists(socket_path):
             print("Error accessing %s\nTry running 'sudo chown pi: %s'" % (socket_path, socket_path))
@@ -79,12 +80,14 @@ def socket_data(run_event, send_rate):
         print("socket error: %s" % err)
         return
 
-    wait_to_connect()
 
 # helper class to convert inference output to JSON
-class Object(object):
+class ApiObject(object):
     def __init__(self):
         self.name = "webrtcHacks AIY Vision Server REST API"
+        self.version = "0.0.1"
+        self.numObjects = 0
+        self.objects = []
 
     def to_json(self):
         return json.dumps(self.__dict__)
@@ -95,7 +98,9 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
 
     global socket_connected
 
-    with PiCamera() as camera, PrivacyLED():
+    leds = Leds()
+
+    with PiCamera() as camera, PrivacyLed(leds):  # ToDo: test this
         camera.sensor_mode = cammode
         camera.resolution = (hres, vres)
         camera.framerate = framerate
@@ -115,19 +120,15 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
             print("%s model loaded" % model)
 
             last_time = time()  # measure inference time
-            time_log = []
 
-            for i, result in enumerate(inference.run()):
+            for result in inference.run():
 
                 # exit on shutdown
                 if not run_event.is_set():
                     camera.stop_preview()
                     return
 
-                output = Object()
-                output.objects = []
-                output.version = "0.0.1"
-                output.numObjects = 0
+                output = ApiObject()
 
                 # handler for the AIY Vision object detection model
                 if model == "object":
@@ -169,6 +170,7 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
                         output.objects.append(item)
 
                 now = time()
+                output.timeStamp = now
                 output.inferenceTime = (now - last_time)
                 last_time = now
 
