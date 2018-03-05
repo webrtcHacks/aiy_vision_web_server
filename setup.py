@@ -18,8 +18,7 @@ setup(
 # Change the owner on the UV4L socket file
 
 try:
-    subprocess.Popen("sudo chown pi: %s" %socket_path,shell=True)
-
+    print("Disabling uv4l-raspidisp keyboard to socket and releasing %s" % socket_path)
+    subprocess.Popen("./uv4l-socket.sh %s" %socket_path,shell=True)
 except:
-    print("Error changing permissions on %s. Is that file setup in uv4l-raspidisp.conf?" % socket_path)
     raise

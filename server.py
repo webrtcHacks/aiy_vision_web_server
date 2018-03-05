@@ -62,6 +62,11 @@ def socket_data(run_event, send_rate):
                 return
 
     try:
+        # Create the socket file if it does not exist
+        if not os.path.exists(socket_path):
+            f = open(socket_path, 'w')
+            f.close()
+
         os.unlink(socket_path)
         s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         s.bind(socket_path)
@@ -79,6 +84,8 @@ def socket_data(run_event, send_rate):
     except socket.error as err:
         print("socket error: %s" % err)
         return
+    except:
+        raise
 
 
 # helper class to convert inference output to JSON
