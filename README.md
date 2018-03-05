@@ -17,12 +17,13 @@ See the [Part 2: Building a AIY Vision Kit Web Server with UV4L](https://webrtch
 1. [Buy](http://www.microcenter.com/site/content/google_aiy.aspx) a AIY Vision Kit
 1. Follow the Vision Kit [Assembly Guide](https://aiyprojects.withgoogle.com/vision#assembly-guide-1-get-the-vision-kit-sd-image) to build it
 1. Install UV4L (see the next section)
-1. Turn the default Joy Detection demo off: `git sudo systemctl stop joy_detection_demo.service`
-1. Clone the repo: `git clone https://github.com/webrtcHacks/aiy_vision_web_server.git` 
-1. Install Python dependencies: `setup.py install`
-1. Start the Python environment: `source ~/AIY-projects-python/env/bin/activate`
-1. Run the server: python server.py
-1. Point your web browser to http://raspberrypi.local:5000 or whatever you set your hostname or IP address to
+1. Install git if you don't have it: `sudo apt-get install git`
+1. Clone the repo: `git clone https://github.com/webrtcHacks/aiy_vision_web_server.git`
+1. Go to the directory: `cd aiy_vision_web_server/`
+1. Install Python dependencies: `sudo python3 setup.py install`
+1. Turn the default Joy Detection demo off: `sudo systemctl stop joy_detection_demo.service`
+1. Run the server: `python3 server.py`
+1. Point your web browser to [http://raspberrypi.local:5000](http://raspberrypi.local:5000) or whatever you set your hostname or IP address to
 
 ### UV4L Installation
 

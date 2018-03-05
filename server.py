@@ -18,7 +18,7 @@ socket_connected = False
 q = queue.Queue(maxsize=1)  # we'll use this for inter-process communication
 capture_width = 1640        # The max horizontal resolution of PiCam v2
 capture_height = 922        # Max vertical resolution on PiCam v2 with a 16:9 ratio
-
+time_log = []
 
 # Control connection to the linux socket and send messages to it
 def socket_data(run_event, send_rate):
@@ -94,17 +94,21 @@ class ApiObject(object):
 
 
 # AIY Vision setup and inference
-def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, vres=922):
+def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, vres=922, stats=True):
+    # See the Raspicam documentation for mode and framerate limits:
+    # https://picamera.readthedocs.io/en/release-1.13/fov.html#sensor-modes
+    # Default to the highest resolution possible at 16:9 aspect ratio
 
-    global socket_connected
+    global socket_connected, time_log
 
     leds = Leds()
 
-    with PiCamera() as camera, PrivacyLed(leds):  # ToDo: test this
+    with PiCamera() as camera, PrivacyLed(leds):
         camera.sensor_mode = cammode
         camera.resolution = (hres, vres)
         camera.framerate = framerate
-        camera.start_preview(fullscreen=True)
+        camera.video_stabilization = True
+        camera.start_preview() # fullscreen=True)
 
         if model == "object":
             tf_model = object_detection.model()
@@ -155,7 +159,7 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
                     faces = face_detection.get_faces(result)
 
                     for face in faces:
-                        print(face)
+                        # print(face)
                         item = {
                             'name': 'face',
                             'score': face.face_score,
@@ -184,8 +188,10 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
                         q.put(output_json)
 
                 # Additional data to measure inference time
-                # time_log.append(output.inferenceTime)
-                # print("Avg inference time: %s" % (sum(time_log)/len(time_log)))
+                if stats is True:
+                    time_log.append(output.inferenceTime)
+                    time_log = time_log[-10:] # just keep the last 10 times
+                    print("Avg inference time: %s" % (sum(time_log)/len(time_log)))
 
 
 # Web server setup
@@ -246,6 +252,13 @@ def main(webserver):
         dest='vres',
         default=922,
         help='Sets the vertical resolution')
+    parser.add_argument(
+        '--stats',
+        '-s',
+        action='store_true',
+        help='Show average inference timing statistics')
+    parser.epilog='For more info see the github repo: https://github.com/webrtcHacks/aiy_vision_web_server/' \
+                  ' or the webrtcHacks blog post: https://webrtchacks.com/?p=2824'
     args = parser.parse_args()
 
     is_running = Event()
@@ -257,7 +270,8 @@ def main(webserver):
 
     # thread for running AIY Tensorflow inference
     detection_thread = Thread(target=run_inference,
-                              args=(is_running, args.model, args.framerate, args.cam_mode, args.hres, args.vres,))
+                              args=(is_running, args.model, args.framerate, args.cam_mode,
+                                    args.hres, args.vres, args.stats, ))
     detection_thread.start()
 
     # run Flask in the main thread
