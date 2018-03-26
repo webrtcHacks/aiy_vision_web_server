@@ -26,7 +26,8 @@ let lastSighting = null;
 //Convert RGB color integer values to hex
 function toHex(n) {
     if (n < 256) {
-        return Math.abs(n).toString(16);
+        return Math.abs(n)
+            .toString(16);
     }
     return 0;
 }
@@ -57,22 +58,36 @@ function processAiyData(result) {
     //clear the previous drawings
     drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
 
-    result.objects.forEach((item) => {
-        if (item.name === "face") {
-            let label = "Face: " + Math.round(item.score * 100) + "%" + " Joy: " + Math.round(item.joy * 100) + "%";
-            let color = {
-                r: Math.round(item.joy * 255),
-                g: 70,
-                b: Math.round((1 - item.joy) * 255)
-            };
-            drawBox(item.x, item.y, item.width, item.height, label, color)
+    result.objects.forEach((item, itemNum) => {
+
+        let label;
+
+        switch (item.name) {
+            case "face": {
+                label = "Face: " + Math.round(item.score * 100) + "%" + " Joy: " + Math.round(item.joy * 100) + "%";
+                let color = {
+                    r: Math.round(item.joy * 255),
+                    g: 70,
+                    b: Math.round((1 - item.joy) * 255)
+                };
+
+                drawBox(item.x, item.y, item.width, item.height, label, color);
+                break;
+            }
+            case "object": {
+                label = item.class_name + " - " + Math.round(item.score * 100) + "%";
+                drawBox(item.x, item.y, item.width, item.height, label);
+                break;
+            }
+            case "class": {
+                label = item.class_name + " - " + Math.round(item.score * 100) + "%";
+                drawCtx.fillText(label, 20, 20 * (itemNum + 1));
+                break;
+            }
+            default: {
+                console.log("I don't know what that AIY Vision server response was");
+            }
         }
-        else if (item.name === "object") {
-            let label = item.class_name + " - " + Math.round(item.score * 100) + "%";
-            drawBox(item.x, item.y, item.width, item.height, label)
-        }
-        else
-            console.log("I don't know what that AIY Vision server response was");
     });
 
 }
