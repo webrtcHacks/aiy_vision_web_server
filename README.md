@@ -49,7 +49,7 @@ They following options are available after `python server.py`:
 
    Verbose switch | Short switch | Default | Description 
   ---|---|---|---
-  --model MODEL | -m MODEL | face | Sets the model to use: `face` or `object`
+  --model MODEL | -m MODEL | face | Sets the model to use: `face`,  `object`, or `class`
   --cam-mode CAM_MODE | -c CAM_MODE | 5 | Sets the [Pi Camera Mode](https://www.raspberrypi.org/documentation/raspbian/applications/camera.md)
   --framerate FRAMERATE | -f FRAMERATE | 15 | Sets the camera frame rate
   --hres HRES | -hr HRES | 1280 |Sets the horizontal resolution

@@ -1,3 +1,9 @@
+# Copyright (c) 2018 Chad Wallace Hart
+# Attribution notice:
+#   Large portions of this code are from https://github.com/google/aiyprojects-raspbian
+#   Copyright 2017 Google Inc.
+#   http://www.apache.org/licenses/LICENSE-2.0
+
 from threading import Thread, Event
 from time import time, sleep
 import socket
@@ -8,8 +14,8 @@ import argparse
 
 from aiy.vision.leds import Leds
 from aiy.vision.leds import PrivacyLed
-from aiy.vision.inference import CameraInference
-from aiy.vision.models import object_detection, face_detection
+from aiy.vision.inference import CameraInference, ImageInference
+from aiy.vision.models import object_detection, face_detection, image_classification
 from picamera import PiCamera
 
 from flask import Flask, Response
@@ -19,6 +25,7 @@ q = queue.Queue(maxsize=1)  # we'll use this for inter-process communication
 capture_width = 1640        # The max horizontal resolution of PiCam v2
 capture_height = 922        # Max vertical resolution on PiCam v2 with a 16:9 ratio
 time_log = []
+
 
 # Control connection to the linux socket and send messages to it
 def socket_data(run_event, send_rate):
@@ -57,8 +64,8 @@ def socket_data(run_event, send_rate):
                     connection.send(str(message).encode())
 
                 sleep(send_rate)
-            except socket.error as err:
-                print("connected socket error: %s" % err)
+            except socket.error as send_err:
+                print("connected socket error: %s" % send_err)
                 return
 
     try:
@@ -81,8 +88,8 @@ def socket_data(run_event, send_rate):
         else:
             print("Socket file not found. Did you configure uv4l-raspidisp to use %s?" % socket_path)
             raise
-    except socket.error as err:
-        print("socket error: %s" % err)
+    except socket.error as sock_err:
+        print("socket error: %s" % sock_err)
         return
     except:
         raise
@@ -92,7 +99,7 @@ def socket_data(run_event, send_rate):
 class ApiObject(object):
     def __init__(self):
         self.name = "webrtcHacks AIY Vision Server REST API"
-        self.version = "0.0.1"
+        self.version = "0.2.0"
         self.numObjects = 0
         self.objects = []
 
@@ -115,13 +122,20 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
         camera.resolution = (hres, vres)
         camera.framerate = framerate
         camera.video_stabilization = True
-        camera.start_preview() # fullscreen=True)
+        camera.start_preview()  # fullscreen=True)
 
-        if model == "object":
-            tf_model = object_detection.model()
-        elif model == "face":
-            tf_model = face_detection.model()
-        else:
+        def model_selector(argument):
+            options = {
+                "object": object_detection.model(),
+                "face": face_detection.model(),
+                "class": image_classification.model()
+            }
+            return options.get(argument, "nothing")
+
+        tf_model = model_selector(model)
+
+        # this is not needed because the function defaults to "face"
+        if tf_model == "nothing":
             print("No tensorflow model or invalid model specified - exiting..")
             camera.stop_preview()
             os._exit(0)
@@ -180,6 +194,27 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
                         output.numObjects += 1
                         output.objects.append(item)
 
+                elif model == "class":
+                    output.threshold = 0.3
+                    classes = image_classification.get_classes(result)
+
+                    s = ""
+
+                    for (obj, prob) in classes:
+                        if prob > output.threshold:
+                            s += '%s=%1.2f\t|\t' % (obj, prob)
+
+                            item = {
+                                'name': 'class',
+                                'class_name': obj,
+                                'score': prob
+                            }
+
+                            output.numObjects += 1
+                            output.objects.append(item)
+
+                    # print('%s\r' % s)
+
                 now = time()
                 output.timeStamp = now
                 output.inferenceTime = (now - last_time)
@@ -197,7 +232,7 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
                 # Additional data to measure inference time
                 if stats is True:
                     time_log.append(output.inferenceTime)
-                    time_log = time_log[-10:] # just keep the last 10 times
+                    time_log = time_log[-10:]  # just keep the last 10 times
                     print("Avg inference time: %s" % (sum(time_log)/len(time_log)))
 
 
@@ -230,7 +265,7 @@ def main(webserver):
         '-m',
         dest='model',
         default='face',
-        help='Sets the model to use: "face" or "object" ')
+        help='Sets the model to use: "face", "object", or "class"')
     parser.add_argument(
         '--cam-mode',
         '-c',
@@ -264,8 +299,8 @@ def main(webserver):
         '-s',
         action='store_true',
         help='Show average inference timing statistics')
-    parser.epilog='For more info see the github repo: https://github.com/webrtcHacks/aiy_vision_web_server/' \
-                  ' or the webrtcHacks blog post: https://webrtchacks.com/?p=2824'
+    parser.epilog = 'For more info see the github repo: https://github.com/webrtcHacks/aiy_vision_web_server/' \
+                    ' or the webrtcHacks blog post: https://webrtchacks.com/?p=2824'
     args = parser.parse_args()
 
     is_running = Event()
