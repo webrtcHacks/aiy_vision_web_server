@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>AIY Vision Detection View and Annotation</title>
+    <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+    <style>
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        canvas{
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index:1
+        }
+    </style>
+</head>
+<body>
+<video id="remoteVideo" autoplay></video>
+<script>
+    //Handle UV4L dataChannel data
+    let lastTime = Date.now();
+    let dataTime, delta = null;
+    function processAiyData(result){
+        console.log(result);
+        dataTime = new Date(result.time);
+        delta = dataTime - lastTime;
+        //console.log("Timestamp " + output.count + ": " + dataTime.toLocaleString());
+        console.log("count: " + result.count + "    timestamp: " + dataTime.toLocaleString() + "    delta: " + delta);
+        lastTime = dataTime;
+    }
+</script>
+<script src="static/uv4l.js"></script>
+</body>
+</html>
