@@ -6,14 +6,16 @@
 
 from threading import Thread, Event
 from time import time, sleep
+from datetime import datetime
 import socket
 import os
 import json
 import queue
 import argparse
+import random
 
-from aiy.vision.leds import Leds
-from aiy.vision.leds import PrivacyLed
+from aiy.leds import Leds
+from aiy.leds import PrivacyLed
 from aiy.vision.inference import CameraInference, ImageInference
 from aiy.vision.models import object_detection, face_detection, image_classification
 from picamera import PiCamera
@@ -28,7 +30,7 @@ time_log = []
 
 
 # Control connection to the linux socket and send messages to it
-def socket_data(run_event, send_rate):
+def socket_data(run_event, send_rate=1/30):
     socket_path = '/tmp/uv4l-raspidisp.socket'
 
     # wait for a connection
@@ -80,6 +82,9 @@ def socket_data(run_event, send_rate):
         s.listen(1)
         s.settimeout(1)
         wait_to_connect()
+    except socket.error as sock_err:
+        print("socket error: %s" % sock_err)
+        return
     except OSError:
         if os.path.exists(socket_path):
             print("Error accessing %s\nTry running 'sudo chown pi: %s'" % (socket_path, socket_path))
@@ -88,9 +93,6 @@ def socket_data(run_event, send_rate):
         else:
             print("Socket file not found. Did you configure uv4l-raspidisp to use %s?" % socket_path)
             raise
-    except socket.error as sock_err:
-        print("socket error: %s" % sock_err)
-        return
     except:
         raise
 
@@ -99,7 +101,7 @@ def socket_data(run_event, send_rate):
 class ApiObject(object):
     def __init__(self):
         self.name = "webrtcHacks AIY Vision Server REST API"
-        self.version = "0.2.0"
+        self.version = "0.2.1"
         self.numObjects = 0
         self.objects = []
 
@@ -254,6 +256,28 @@ def index():
 def ping():
     return Response("pong")
 
+@app.route('/socket-test')
+def socket_test():
+    return Response(open('static/socket-test.html').read(), mimetype="text/html")
+
+
+def socket_tester(rate):
+    output = ApiObject()
+    last_time = False
+    count = 0
+
+    while True:
+        if socket_connected is True:
+            count += 1
+            current_time = time()
+            output.time = (datetime.utcnow()-datetime.utcfromtimestamp(0)).total_seconds()*1000
+            output.data = ''.join(random.choice("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") for _ in range(1000))
+            output.count = count
+            q.put(output.to_json())
+            print("count, timestamp, delta:     %s    %s    %s" % (output.count, current_time, current_time - last_time))
+            last_time = current_time
+
+        sleep(rate)
 
 # Main control logic to parse args and spawn threads
 def main(webserver):
@@ -299,6 +323,12 @@ def main(webserver):
         '-s',
         action='store_true',
         help='Show average inference timing statistics')
+    parser.add_argument(
+        '--perftest',
+        '-t',
+        dest='perftest',
+        action='store_true',
+        help='Start socket performance test')
     parser.epilog = 'For more info see the github repo: https://github.com/webrtcHacks/aiy_vision_web_server/' \
                     ' or the webrtcHacks blog post: https://webrtchacks.com/?p=2824'
     args = parser.parse_args()
@@ -306,15 +336,27 @@ def main(webserver):
     is_running = Event()
     is_running.set()
 
-    # run this independent of a flask connection so we can test it with the uv4l console
-    socket_thread = Thread(target=socket_data, args=(is_running, 1 / args.framerate,))
-    socket_thread.start()
+    if args.perftest:
+        print("Socket performance test mode")
 
-    # thread for running AIY Tensorflow inference
-    detection_thread = Thread(target=run_inference,
-                              args=(is_running, args.model, args.framerate, args.cam_mode,
-                                    args.hres, args.vres, args.stats, ))
-    detection_thread.start()
+        # run this independent of a flask connection so we can test it with the uv4l console
+        socket_thread = Thread(target=socket_data, args=(is_running, 1/1000,))
+        socket_thread.start()
+
+        socket_test_thread = Thread(target=socket_tester,
+                              args=(0.250,))
+        socket_test_thread.start()
+
+    else:
+        # run this independent of a flask connection so we can test it with the uv4l console
+        socket_thread = Thread(target=socket_data, args=(is_running, 1 / args.framerate,))
+        socket_thread.start()
+
+        # thread for running AIY Tensorflow inference
+        detection_thread = Thread(target=run_inference,
+                                  args=(is_running, args.model, args.framerate, args.cam_mode,
+                                        args.hres, args.vres, args.stats, ))
+        detection_thread.start()
 
     # run Flask in the main thread
     webserver.run(debug=False, host='0.0.0.0')
@@ -322,7 +364,10 @@ def main(webserver):
     # close threads when flask is done
     print("exiting...")
     is_running.clear()
-    detection_thread.join(0)
+    if args.perftest:
+        socket_test_thread.join(0)
+    else:
+        detection_thread.join(0)
     socket_thread.join(0)
 
 
