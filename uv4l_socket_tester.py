@@ -125,7 +125,7 @@ def main():
     socket_thread = Thread(target=socket_data, args=(1 / 1000,))
     socket_thread.start()
 
-    socket_tester(0.500)
+    socket_tester(1/15)
 
     # ToDo: figure out why this does not close cleanly
     end = True

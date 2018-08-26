@@ -14,8 +14,8 @@ import queue
 import argparse
 import random
 
-from aiy.vision.leds import Leds
-from aiy.vision.leds import PrivacyLed
+from aiy.leds import Leds
+from aiy.leds import PrivacyLed
 from aiy.vision.inference import CameraInference, ImageInference
 from aiy.vision.models import object_detection, face_detection, image_classification
 from picamera import PiCamera
@@ -82,6 +82,9 @@ def socket_data(run_event, send_rate=1/30):
         s.listen(1)
         s.settimeout(1)
         wait_to_connect()
+    except socket.error as sock_err:
+        print("socket error: %s" % sock_err)
+        return
     except OSError:
         if os.path.exists(socket_path):
             print("Error accessing %s\nTry running 'sudo chown pi: %s'" % (socket_path, socket_path))
@@ -90,9 +93,6 @@ def socket_data(run_event, send_rate=1/30):
         else:
             print("Socket file not found. Did you configure uv4l-raspidisp to use %s?" % socket_path)
             raise
-    except socket.error as sock_err:
-        print("socket error: %s" % sock_err)
-        return
     except:
         raise
 
@@ -101,7 +101,7 @@ def socket_data(run_event, send_rate=1/30):
 class ApiObject(object):
     def __init__(self):
         self.name = "webrtcHacks AIY Vision Server REST API"
-        self.version = "0.2.0"
+        self.version = "0.2.1"
         self.numObjects = 0
         self.objects = []
 
@@ -337,7 +337,7 @@ def main(webserver):
     is_running.set()
 
     if args.perftest:
-        print("performance test mode")
+        print("Socket performance test mode")
 
         # run this independent of a flask connection so we can test it with the uv4l console
         socket_thread = Thread(target=socket_data, args=(is_running, 1/1000,))

@@ -12,8 +12,11 @@ let ws = new WebSocket(protocol + '//' + signalling_server_address + ':' + uv4lP
 
 //Global vars
 let remoteVideo = null;
+let remotePc = false;
 let pc,
     dataChannel;
+let iceCandidates = [];
+
 
 //////////////////////////
 /*** Peer Connection ***/
@@ -80,7 +83,8 @@ function startCall() {
         what: "call",
         options: {
             force_hw_vcodec: true,
-            vformat: 55
+            vformat: 55,
+            trickle_ice: true
         }
     };
 
@@ -90,9 +94,8 @@ function startCall() {
 }
 
 //Process incoming ICE candidates
-//UV4L does not do Trickle-ICE and sends all candidates at once
-//in a format that adapter.js doesn't like, so regenerate
-function onIceCandidates(remoteCandidates) {
+// in a format that adapter.js doesn't like, so regenerate
+function addIceCandidate(candidate) {
 
     function onAddIceCandidateSuccess() {
         console.log("Successfully added ICE candidate")
@@ -102,16 +105,25 @@ function onIceCandidates(remoteCandidates) {
         console.error("Failed to add candidate: " + err)
     }
 
-    remoteCandidates.forEach((candidate) => {
-        let generatedCandidate = new RTCIceCandidate({
-            sdpMLineIndex: candidate.sdpMLineIndex,
-            candidate: candidate.candidate,
-            sdpMid: candidate.sdpMid
-        });
-        console.log("Created ICE candidate: " + JSON.stringify(generatedCandidate));
-        pc.addIceCandidate(generatedCandidate)
-            .then(onAddIceCandidateSuccess, onAddIceCandidateError);
+    let generatedCandidate = new RTCIceCandidate({
+        sdpMLineIndex: candidate.sdpMLineIndex,
+        candidate: candidate.candidate,
+        sdpMid: candidate.sdpMid
     });
+    //console.log("Created ICE candidate: " + JSON.stringify(generatedCandidate));
+
+    //Hold on to them in case the remote PeerConnection isn't ready
+    iceCandidates.push(generatedCandidate);
+
+    //Add the generated candidates when the remote PeerConnection is ready
+    if (remotePc){
+        iceCandidates.forEach((candidate)=>
+            pc.addIceCandidate(candidate)
+                .then(onAddIceCandidateSuccess, onAddIceCandidateError)
+            );
+        console.log("Added " + iceCandidates.length + " remote candidate(s)");
+        iceCandidates = [];
+    }
 }
 
 //Handle Offer/Answer exchange
@@ -120,36 +132,34 @@ function offerAnswer(remoteSdp) {
     //Start the answer by setting the remote SDP
     pc.setRemoteDescription(new RTCSessionDescription(remoteSdp))
         .then(() => {
-                console.log("setRemoteDescription complete");
-
-                //Create the local SDP
-                pc.createAnswer()
-                    .then(
-                        (localSdp) => {
-                            pc.setLocalDescription(localSdp)
-                                .then(() => {
-                                        console.log("setLocalDescription complete");
-
-                                        //send the answer
-                                        let req = {
-                                            what: "answer",
-                                            data: JSON.stringify(localSdp)
-                                        };
-                                        ws.send(JSON.stringify(req));
-                                        console.log("Sent local SDP: " + JSON.stringify(localSdp));
-
-                                    },
-                                    (err) => console.error("setLocalDescription error:" + err));
-                        },
-                        (err) =>
-                            console.log('Failed to create session description: ' + err.toString())
-                    );
+            remotePc = true;
+            console.log("setRemoteDescription complete")
             },
             (err) => console.error("Failed to setRemoteDescription: " + err));
 
-    //Now ask for ICE candidates
-    console.log("telling uv4l-server to generate IceCandidates");
-    ws.send(JSON.stringify({what: "generateIceCandidates"}));
+
+    //Create the local SDP
+    pc.createAnswer()
+        .then(
+            (localSdp) => {
+                pc.setLocalDescription(localSdp)
+                    .then(() => {
+                            console.log("setLocalDescription complete");
+
+                            //send the answer
+                            let req = {
+                                what: "answer",
+                                data: JSON.stringify(localSdp)
+                            };
+                            ws.send(JSON.stringify(req));
+                            console.log("Sent local SDP: " + JSON.stringify(localSdp));
+
+                        },
+                        (err) => console.error("setLocalDescription error:" + err));
+            },
+            (err) =>
+                console.log('Failed to create session description: ' + err.toString())
+        );
 
 }
 
@@ -159,14 +169,13 @@ function offerAnswer(remoteSdp) {
 
 function websocketEvents() {
 
+    /*** Signaling logic ***/
     ws.onopen = () => {
         console.log("websocket open");
 
         startCall();
-
     };
 
-    /*** Signaling logic ***/
     ws.onmessage = (event) => {
         let message = JSON.parse(event.data);
         console.log("Incoming message:" + JSON.stringify(message));
@@ -182,8 +191,19 @@ function websocketEvents() {
                 offerAnswer(JSON.parse(message.data));
                 break;
 
+            case "iceCandidate":
+                if (!message.data) {
+                    console.log("Ice Gathering Complete");
+                }
+                else
+                    addIceCandidate(JSON.parse(message.data));
+                break;
+
+            //ToDo: Ask about this - I can't get this message to show
             case "iceCandidates":
-                onIceCandidates(JSON.parse(message.data));
+                let candidates = JSON.parse(message.data);
+                candidates.forEach((candidate) =>
+                    addIceCandidate(JSON.parse(candidate)));
                 break;
 
             default:
@@ -198,6 +218,7 @@ function websocketEvents() {
     ws.onclose = () => {
         console.log("Websocket closed.");
     };
+
 
 }
 
