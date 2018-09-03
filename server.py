@@ -13,16 +13,17 @@ from time import time, sleep
 from datetime import datetime           # Timing & stats output
 import socket                           # uv4l communication
 import os                               # help with connecting to the socket file
-import json                             # Format API output
 import argparse                         # Commandline arguments
 import random                           # Used for performance testing
 import io                               # Needed to write to disk for recording
+from glob import glob
+
+from aiy_model_output import model_selector, process_inference
 
 # AIY requirements
 from aiy.leds import Leds
 from aiy.leds import PrivacyLed
 from aiy.vision.inference import CameraInference, ImageInference
-from aiy.vision.models import object_detection, face_detection, image_classification
 from picamera import PiCamera, PiCameraCircularIO
 
 from flask import Flask, Response       # web server
@@ -102,18 +103,6 @@ def socket_data(run_event, send_rate=1/30):
         raise
 
 
-# helper class to convert inference output to JSON
-class ApiObject(object):
-    def __init__(self):
-        self.name = "webrtcHacks AIY Vision Server REST API"
-        self.version = "0.2.1"
-        self.numObjects = 0
-        self.objects = []
-
-    def to_json(self):
-        return json.dumps(self.__dict__)
-
-
 def write_video(stream, file):
     # Write the entire content of the circular buffer to disk. No need to
     # lock the stream here as we're definitely not writing to it
@@ -164,14 +153,6 @@ def run_inference(run_event, model="face", framerate=15, cam_mode=5, hres=1640, 
         stream = PiCameraCircularIO(camera, seconds=record_time_before_detection)
         camera.start_recording(stream, format='h264')
 
-        def model_selector(argument):
-            options = {
-                "object": object_detection.model(),
-                "face": face_detection.model(),
-                "class": image_classification.model()
-            }
-            return options.get(argument, "nothing")
-
         tf_model = model_selector(model)
 
         # this is not needed because the function defaults to "face"
@@ -196,68 +177,7 @@ def run_inference(run_event, model="face", framerate=15, cam_mode=5, hres=1640, 
                         camera.stop_preview()
                         return
 
-                    output = ApiObject()
-
-                    # ToDo: Move this to a seperate file?
-                    # handler for the AIY Vision object detection model
-                    if model == "object":
-                        output.threshold = 0.3
-                        objects = object_detection.get_objects(result, output.threshold)
-
-                        for obj in objects:
-                            # print(object)
-                            item = {
-                                'name': 'object',
-                                'class_name': obj._LABELS[obj.kind],
-                                'score': obj.score,
-                                'x': obj.bounding_box[0] / capture_width,
-                                'y': obj.bounding_box[1] / capture_height,
-                                'width': obj.bounding_box[2] / capture_width,
-                                'height': obj.bounding_box[3] / capture_height
-                            }
-
-                            output.numObjects += 1
-                            output.objects.append(item)
-
-                    # handler for the AIY Vision face detection model
-                    elif model == "face":
-                        faces = face_detection.get_faces(result)
-
-                        for face in faces:
-                            # print(face)
-                            item = {
-                                'name': 'face',
-                                'score': face.face_score,
-                                'joy': face.joy_score,
-                                'x': face.bounding_box[0] / capture_width,
-                                'y': face.bounding_box[1] / capture_height,
-                                'width': face.bounding_box[2] / capture_width,
-                                'height': face.bounding_box[3] / capture_height,
-                            }
-
-                            output.numObjects += 1
-                            output.objects.append(item)
-
-                    elif model == "class":
-                        output.threshold = 0.3
-                        classes = image_classification.get_classes(result)
-
-                        s = ""
-
-                        for (obj, prob) in classes:
-                            if prob > output.threshold:
-                                s += '%s=%1.2f\t|\t' % (obj, prob)
-
-                                item = {
-                                    'name': 'class',
-                                    'class_name': obj,
-                                    'score': prob
-                                }
-
-                                output.numObjects += 1
-                                output.objects.append(item)
-
-                        # print('%s\r' % s)
+                    output = process_inference(model, result, {'height':capture_height , 'width': capture_width})
 
                     now = time()
                     output.timeStamp = now
@@ -325,17 +245,43 @@ def flask_server():
 def index():
     return Response(open('static/index.html').read(), mimetype="text/html")
 
+# Note: This won't be able to play the files without conversion.
+# Running ffmpeg while running inference & streaming will be too intensive for the Pi Zeros
+# Look to make this a user controlled process or do it in the browser
+@app.route('/recordings')
+def recordings():
+    # before_list = glob(os.getcwd() +  '/recordings/*_before.h264')
+    # after_list = glob(os.getcwd() + '/recordings/*_after.h264')
+
+    # print(before_list)
+    # print(after_list)
+
+    files = [f for f in os.listdir('./recordings') if f.endswith(".h264")]
+    files.sort()
+    print(files)
+
+    html_table = "<table><tr><th>Before Detection</th><th>After Detection</th></tr>"
+    # for i in range(len(before_list)):
+    #    html_table = html_table + "<tr><td>" + before_list[i] + "</td><td>" + after_list[i] + "</tr>"
+
+    html_table = html_table + "</table>"
+    print(html_table)
+    page = "<HTML><TITLE>List of Recordings</TITLE><BODY><h2>The list goes here</h2>%s</BODY></HTML>" % html_table
+    print(page)
+    return Response(page)
+
 
 # test route to verify the flask is working
 @app.route('/ping')
 def ping():
     return Response("pong")
 
+
 @app.route('/socket-test')
 def socket_test():
     return Response(open('static/socket-test.html').read(), mimetype="text/html")
 
-
+'''
 def socket_tester(rate):
     output = ApiObject()
     last_time = False
@@ -353,6 +299,8 @@ def socket_tester(rate):
             last_time = current_time
 
         sleep(rate)
+'''
+
 
 # Main control logic to parse args and spawn threads
 def main(webserver):
@@ -404,6 +352,12 @@ def main(webserver):
         dest='perftest',
         action='store_true',
         help='Start socket performance test')
+    parser.add_argument(
+        '--record',
+        '-r',
+        dest='record',
+        action='store_true',
+        help='Record')
     parser.epilog = 'For more info see the github repo: https://github.com/webrtcHacks/aiy_vision_web_server/' \
                     ' or the webrtcHacks blog post: https://webrtchacks.com/?p=2824'
     args = parser.parse_args()
@@ -411,6 +365,7 @@ def main(webserver):
     is_running = Event()
     is_running.set()
 
+    '''
     if args.perftest:
         print("Socket performance test mode")
 
@@ -423,15 +378,16 @@ def main(webserver):
         socket_test_thread.start()
 
     else:
-        # run this independent of a flask connection so we can test it with the uv4l console
-        socket_thread = Thread(target=socket_data, args=(is_running, 1 / args.framerate,))
-        socket_thread.start()
+    '''
+    # run this independent of a flask connection so we can test it with the uv4l console
+    socket_thread = Thread(target=socket_data, args=(is_running, 1 / args.framerate,))
+    socket_thread.start()
 
-        # thread for running AIY Tensorflow inference
-        detection_thread = Thread(target=run_inference,
-                                  args=(is_running, args.model, args.framerate, args.cam_mode,
-                                        args.hres, args.vres, args.stats, ))
-        detection_thread.start()
+    # thread for running AIY Tensorflow inference
+    detection_thread = Thread(target=run_inference,
+                              args=(is_running, args.model, args.framerate, args.cam_mode,
+                                    args.hres, args.vres, args.stats, ))
+    detection_thread.start()
 
     # run Flask in the main thread
     webserver.run(debug=False, host='0.0.0.0')
@@ -439,10 +395,12 @@ def main(webserver):
     # close threads when flask is done
     print("exiting...")
     is_running.clear()
+    '''
     if args.perftest:
         socket_test_thread.join(0)
     else:
         detection_thread.join(0)
+    '''
     socket_thread.join(0)
 
 
