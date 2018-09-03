@@ -15,23 +15,24 @@ import socket                           # uv4l communication
 import os                               # help with connecting to the socket file
 import argparse                         # Commandline arguments
 import random                           # Used for performance testing
-import io                               # Needed to write to disk for recording
-from glob import glob
+
+from picamera import PiCamera           # PiCam hardware
+from flask import Flask, Response       # Web server
 
 from aiy_model_output import model_selector, process_inference
+import picam_record as record
 
 # AIY requirements
 from aiy.leds import Leds
 from aiy.leds import PrivacyLed
 from aiy.vision.inference import CameraInference, ImageInference
-from picamera import PiCamera, PiCameraCircularIO
 
-from flask import Flask, Response       # web server
 
 socket_connected = False
 q = queue.Queue(maxsize=1)  # we'll use this for inter-process communication
-capture_width = 1640        # The max horizontal resolution of PiCam v2
-capture_height = 922        # Max vertical resolution on PiCam v2 with a 16:9 ratio
+# ToDo: remove these
+# capture_width = 1640        # The max horizontal resolution of PiCam v2
+# capture_height = 922        # Max vertical resolution on PiCam v2 with a 16:9 ratio
 time_log = []
 
 
@@ -99,33 +100,10 @@ def socket_data(run_event, send_rate=1/30):
         else:
             print("Socket file not found. Did you configure uv4l-raspidisp to use %s?" % socket_path)
             raise
-    except:
-        raise
-
-
-def write_video(stream, file):
-    # Write the entire content of the circular buffer to disk. No need to
-    # lock the stream here as we're definitely not writing to it
-    # simultaneously
-    with io.open(file, 'wb') as output:
-        for frame in stream.frames:
-            if frame.header:
-                stream.seek(frame.position)
-                break
-        while True:
-            buf = stream.read1()
-            if not buf:
-                break
-            output.write(buf)
-
-        print("wrote %s" % file)
-    # Wipe the circular stream once we're done
-    stream.seek(0)
-    stream.truncate()
 
 
 # AIY Vision setup and inference
-def run_inference(run_event, model="face", framerate=15, cam_mode=5, hres=1640, vres=922, stats=True):
+def run_inference(run_event, model="face", framerate=15, cam_mode=5, hres=1640, vres=922, stats=False, recording=False):
     # See the Raspicam documentation for mode and framerate limits:
     # https://picamera.readthedocs.io/en/release-1.13/fov.html#sensor-modes
     # Default to the highest resolution possible at 16:9 aspect ratio
@@ -141,18 +119,6 @@ def run_inference(run_event, model="face", framerate=15, cam_mode=5, hres=1640, 
         camera.video_stabilization = True
         camera.start_preview()  # fullscreen=True)
 
-        # Start recording
-        # ToDo: turn these into args
-        record_time_before_detection = 5
-        no_detection_timeout = 5
-        max_recording_length = 30
-        is_recording = False
-        recording_start_time = -1
-        last_detection_time = -1
-        after_file = ""
-        stream = PiCameraCircularIO(camera, seconds=record_time_before_detection)
-        camera.start_recording(stream, format='h264')
-
         tf_model = model_selector(model)
 
         # this is not needed because the function defaults to "face"
@@ -162,11 +128,12 @@ def run_inference(run_event, model="face", framerate=15, cam_mode=5, hres=1640, 
             os._exit(0)
             return
 
+        if recording:
+            record.start(camera)
+
         try:
             with CameraInference(tf_model) as inference:
                 print("%s model loaded" % model)
-
-                camera.wait_recording(1)     #  make sure recording is loaded
 
                 last_time = time()  # measure inference time
 
@@ -177,7 +144,7 @@ def run_inference(run_event, model="face", framerate=15, cam_mode=5, hres=1640, 
                         camera.stop_preview()
                         return
 
-                    output = process_inference(model, result, {'height':capture_height , 'width': capture_width})
+                    output = process_inference(model, result, {'height':vres , 'width': hres})
 
                     now = time()
                     output.timeStamp = now
@@ -190,48 +157,24 @@ def run_inference(run_event, model="face", framerate=15, cam_mode=5, hres=1640, 
 
                         # API Output
                         output_json = output.to_json()
-                        # print(output_json)
+                        print(output_json)
 
                         # Send the json object if there is a socket connection
                         if socket_connected is True:
                             q.put(output_json)
 
-                        # ToDo: make this a seperate function?
-                        # Recording
-                        if not is_recording:
-                            print("Detection started")
-                            is_recording = True
-                            recording_start_time = int(now)
-                            # start recording frames after the initial detection
-                            before_file = (os.path.join('./recordings', '%d_before.h264' % recording_start_time))
-                            after_file = (os.path.join('./recordings', '%d_after.h264' % recording_start_time))
-                            camera.split_recording(after_file)
-                            # Write the 10 seconds "before" detection
-                            write_video(stream, before_file)
-
-                        # write to disk if max recording length exceeded
-                        elif int(now) - recording_start_time > max_recording_length - record_time_before_detection:
-                            print("Max recording length reached. Writing %s" % after_file)
-                            # Split here: write to after_file, and start capturing to the stream again
-                            camera.split_recording(stream)
-                            is_recording = False
-
-                        last_detection_time = now
-
-                    elif is_recording and int(now)-last_detection_time > no_detection_timeout:
-                        print("No more detections, writing %s" % after_file)
-                        # Split here: write to after_file, and start capturing to the stream again
-                        camera.split_recording(stream)
-                        is_recording = False
+                    if recording:
+                        record.detection(output.numObjects > 0)
 
                     # Additional data to measure inference time
-                    if stats is True:
+                    if stats:
                         time_log.append(output.inferenceTime)
                         time_log = time_log[-10:]  # just keep the last 10 times
                         print("Avg inference time: %s" % (sum(time_log)/len(time_log)))
         finally:
-            camera.stop_recording()
             camera.stop_preview()
+            if recording:
+                camera.stop_recording()
 
 # Web server setup
 app = Flask(__name__)
@@ -358,6 +301,7 @@ def main(webserver):
         dest='record',
         action='store_true',
         help='Record')
+    # ToDo: Add recorder parameters
     parser.epilog = 'For more info see the github repo: https://github.com/webrtcHacks/aiy_vision_web_server/' \
                     ' or the webrtcHacks blog post: https://webrtchacks.com/?p=2824'
     args = parser.parse_args()
@@ -379,6 +323,10 @@ def main(webserver):
 
     else:
     '''
+
+    if args.record:
+        record.init(before_detection=5, timeout=5, max_length=30)
+
     # run this independent of a flask connection so we can test it with the uv4l console
     socket_thread = Thread(target=socket_data, args=(is_running, 1 / args.framerate,))
     socket_thread.start()
@@ -386,7 +334,7 @@ def main(webserver):
     # thread for running AIY Tensorflow inference
     detection_thread = Thread(target=run_inference,
                               args=(is_running, args.model, args.framerate, args.cam_mode,
-                                    args.hres, args.vres, args.stats, ))
+                                    args.hres, args.vres, args.stats, args.record))
     detection_thread.start()
 
     # run Flask in the main thread

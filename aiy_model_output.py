@@ -4,7 +4,6 @@ import json                             # Format API output
 # AIY requirements
 from aiy.vision.models import object_detection, face_detection, image_classification
 
-
 # return the appropriate model
 def model_selector(argument):
     options = {
