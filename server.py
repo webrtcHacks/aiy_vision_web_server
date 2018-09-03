@@ -3,24 +3,29 @@
 #   Large portions of this code are from https://github.com/google/aiyprojects-raspbian
 #   Copyright 2017 Google Inc.
 #   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Walkthough and function details https://webrtchacks.com/aiy-vision-kit-uv4l-web-server/
+# Source repo: https://github.com/webrtcHacks/aiy_vision_web_server
 
-from threading import Thread, Event
+from threading import Thread, Event     # Multi-threading
+import queue                            # Multi-threading
 from time import time, sleep
-from datetime import datetime
-import socket
-import os
-import json
-import queue
-import argparse
-import random
+from datetime import datetime           # Timing & stats output
+import socket                           # uv4l communication
+import os                               # help with connecting to the socket file
+import json                             # Format API output
+import argparse                         # Commandline arguments
+import random                           # Used for performance testing
+import io                               # Needed to write to disk for recording
 
+# AIY requirements
 from aiy.leds import Leds
 from aiy.leds import PrivacyLed
 from aiy.vision.inference import CameraInference, ImageInference
 from aiy.vision.models import object_detection, face_detection, image_classification
-from picamera import PiCamera
+from picamera import PiCamera, PiCameraCircularIO
 
-from flask import Flask, Response
+from flask import Flask, Response       # web server
 
 socket_connected = False
 q = queue.Queue(maxsize=1)  # we'll use this for inter-process communication
@@ -109,8 +114,29 @@ class ApiObject(object):
         return json.dumps(self.__dict__)
 
 
+def write_video(stream, file):
+    # Write the entire content of the circular buffer to disk. No need to
+    # lock the stream here as we're definitely not writing to it
+    # simultaneously
+    with io.open(file, 'wb') as output:
+        for frame in stream.frames:
+            if frame.header:
+                stream.seek(frame.position)
+                break
+        while True:
+            buf = stream.read1()
+            if not buf:
+                break
+            output.write(buf)
+
+        print("wrote %s" % file)
+    # Wipe the circular stream once we're done
+    stream.seek(0)
+    stream.truncate()
+
+
 # AIY Vision setup and inference
-def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, vres=922, stats=True):
+def run_inference(run_event, model="face", framerate=15, cam_mode=5, hres=1640, vres=922, stats=True):
     # See the Raspicam documentation for mode and framerate limits:
     # https://picamera.readthedocs.io/en/release-1.13/fov.html#sensor-modes
     # Default to the highest resolution possible at 16:9 aspect ratio
@@ -120,11 +146,23 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
     leds = Leds()
 
     with PiCamera() as camera, PrivacyLed(leds):
-        camera.sensor_mode = cammode
+        camera.sensor_mode = cam_mode
         camera.resolution = (hres, vres)
         camera.framerate = framerate
         camera.video_stabilization = True
         camera.start_preview()  # fullscreen=True)
+
+        # Start recording
+        # ToDo: turn these into args
+        record_time_before_detection = 5
+        no_detection_timeout = 5
+        max_recording_length = 30
+        is_recording = False
+        recording_start_time = -1
+        last_detection_time = -1
+        after_file = ""
+        stream = PiCameraCircularIO(camera, seconds=record_time_before_detection)
+        camera.start_recording(stream, format='h264')
 
         def model_selector(argument):
             options = {
@@ -143,100 +181,137 @@ def run_inference(run_event, model="face", framerate=15, cammode=5, hres=1640, v
             os._exit(0)
             return
 
-        with CameraInference(tf_model) as inference:
-            print("%s model loaded" % model)
+        try:
+            with CameraInference(tf_model) as inference:
+                print("%s model loaded" % model)
 
-            last_time = time()  # measure inference time
+                camera.wait_recording(1)     #  make sure recording is loaded
 
-            for result in inference.run():
+                last_time = time()  # measure inference time
 
-                # exit on shutdown
-                if not run_event.is_set():
-                    camera.stop_preview()
-                    return
+                for result in inference.run():
 
-                output = ApiObject()
+                    # exit on shutdown
+                    if not run_event.is_set():
+                        camera.stop_preview()
+                        return
 
-                # handler for the AIY Vision object detection model
-                if model == "object":
-                    output.threshold = 0.3
-                    objects = object_detection.get_objects(result, output.threshold)
+                    output = ApiObject()
 
-                    for obj in objects:
-                        # print(object)
-                        item = {
-                            'name': 'object',
-                            'class_name': obj._LABELS[obj.kind],
-                            'score': obj.score,
-                            'x': obj.bounding_box[0] / capture_width,
-                            'y': obj.bounding_box[1] / capture_height,
-                            'width': obj.bounding_box[2] / capture_width,
-                            'height': obj.bounding_box[3] / capture_height
-                        }
+                    # ToDo: Move this to a seperate file?
+                    # handler for the AIY Vision object detection model
+                    if model == "object":
+                        output.threshold = 0.3
+                        objects = object_detection.get_objects(result, output.threshold)
 
-                        output.numObjects += 1
-                        output.objects.append(item)
-
-                # handler for the AIY Vision face detection model
-                elif model == "face":
-                    faces = face_detection.get_faces(result)
-
-                    for face in faces:
-                        # print(face)
-                        item = {
-                            'name': 'face',
-                            'score': face.face_score,
-                            'joy': face.joy_score,
-                            'x': face.bounding_box[0] / capture_width,
-                            'y': face.bounding_box[1] / capture_height,
-                            'width': face.bounding_box[2] / capture_width,
-                            'height': face.bounding_box[3] / capture_height,
-                        }
-
-                        output.numObjects += 1
-                        output.objects.append(item)
-
-                elif model == "class":
-                    output.threshold = 0.3
-                    classes = image_classification.get_classes(result)
-
-                    s = ""
-
-                    for (obj, prob) in classes:
-                        if prob > output.threshold:
-                            s += '%s=%1.2f\t|\t' % (obj, prob)
-
+                        for obj in objects:
+                            # print(object)
                             item = {
-                                'name': 'class',
-                                'class_name': obj,
-                                'score': prob
+                                'name': 'object',
+                                'class_name': obj._LABELS[obj.kind],
+                                'score': obj.score,
+                                'x': obj.bounding_box[0] / capture_width,
+                                'y': obj.bounding_box[1] / capture_height,
+                                'width': obj.bounding_box[2] / capture_width,
+                                'height': obj.bounding_box[3] / capture_height
                             }
 
                             output.numObjects += 1
                             output.objects.append(item)
 
-                    # print('%s\r' % s)
+                    # handler for the AIY Vision face detection model
+                    elif model == "face":
+                        faces = face_detection.get_faces(result)
 
-                now = time()
-                output.timeStamp = now
-                output.inferenceTime = (now - last_time)
-                last_time = now
+                        for face in faces:
+                            # print(face)
+                            item = {
+                                'name': 'face',
+                                'score': face.face_score,
+                                'joy': face.joy_score,
+                                'x': face.bounding_box[0] / capture_width,
+                                'y': face.bounding_box[1] / capture_height,
+                                'width': face.bounding_box[2] / capture_width,
+                                'height': face.bounding_box[3] / capture_height,
+                            }
 
-                # No need to do anything else if there are no objects
-                if output.numObjects > 0:
-                    output_json = output.to_json()
-                    print(output_json)
+                            output.numObjects += 1
+                            output.objects.append(item)
 
-                    # Send the json object if there is a socket connection
-                    if socket_connected is True:
-                        q.put(output_json)
+                    elif model == "class":
+                        output.threshold = 0.3
+                        classes = image_classification.get_classes(result)
 
-                # Additional data to measure inference time
-                if stats is True:
-                    time_log.append(output.inferenceTime)
-                    time_log = time_log[-10:]  # just keep the last 10 times
-                    print("Avg inference time: %s" % (sum(time_log)/len(time_log)))
+                        s = ""
 
+                        for (obj, prob) in classes:
+                            if prob > output.threshold:
+                                s += '%s=%1.2f\t|\t' % (obj, prob)
+
+                                item = {
+                                    'name': 'class',
+                                    'class_name': obj,
+                                    'score': prob
+                                }
+
+                                output.numObjects += 1
+                                output.objects.append(item)
+
+                        # print('%s\r' % s)
+
+                    now = time()
+                    output.timeStamp = now
+                    output.inferenceTime = (now - last_time)
+                    last_time = now
+
+                    # Process detection
+                    # No need to do anything else if there are no objects
+                    if output.numObjects > 0:
+
+                        # API Output
+                        output_json = output.to_json()
+                        # print(output_json)
+
+                        # Send the json object if there is a socket connection
+                        if socket_connected is True:
+                            q.put(output_json)
+
+                        # ToDo: make this a seperate function?
+                        # Recording
+                        if not is_recording:
+                            print("Detection started")
+                            is_recording = True
+                            recording_start_time = int(now)
+                            # start recording frames after the initial detection
+                            before_file = (os.path.join('./recordings', '%d_before.h264' % recording_start_time))
+                            after_file = (os.path.join('./recordings', '%d_after.h264' % recording_start_time))
+                            camera.split_recording(after_file)
+                            # Write the 10 seconds "before" detection
+                            write_video(stream, before_file)
+
+                        # write to disk if max recording length exceeded
+                        elif int(now) - recording_start_time > max_recording_length - record_time_before_detection:
+                            print("Max recording length reached. Writing %s" % after_file)
+                            # Split here: write to after_file, and start capturing to the stream again
+                            camera.split_recording(stream)
+                            is_recording = False
+
+                        last_detection_time = now
+
+                    elif is_recording and int(now)-last_detection_time > no_detection_timeout:
+                        print("No more detections, writing %s" % after_file)
+                        # Split here: write to after_file, and start capturing to the stream again
+                        camera.split_recording(stream)
+                        is_recording = False
+
+                    # Additional data to measure inference time
+                    if stats is True:
+                        time_log.append(output.inferenceTime)
+                        time_log = time_log[-10:]  # just keep the last 10 times
+                        print("Avg inference time: %s" % (sum(time_log)/len(time_log)))
+        finally:
+            camera.stop_recording()
+            camera.stop_preview()
 
 # Web server setup
 app = Flask(__name__)
