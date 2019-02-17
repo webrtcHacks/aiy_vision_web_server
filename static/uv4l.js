@@ -11,62 +11,29 @@ const signalling_server_address = location.hostname;
 let ws = new WebSocket(protocol + '//' + signalling_server_address + ':' + uv4lPort + '/stream/webrtc');
 
 //Global vars
-let remoteVideo = null;
 let remotePc = false;
 let pc,
     dataChannel;
 let iceCandidates = [];
+const remoteVideo = document.querySelector('#remoteVideo');
 
 
-//////////////////////////
-/*** Peer Connection ***/
+////////////////////////////////////////
+/*** Peer Connection Event Handlers ***/
 
-function setupPeerConnection() {
-    const pcConfig = {
-        iceServers: [{
-            urls: [
-                //"stun:stun.l.google.com:19302",
-                "stun:" + signalling_server_address + ":3478"
-            ]
-        }]
-    };
+function gotRemoteStream(e) {
+    if (remoteVideo.srcObject !== e.streams[0]) {
+        remoteVideo.srcObject = e.streams[0];
+        console.log('Received remote stream');
+    }
+}
 
-    //Setup our peerConnection object
-    pc = new RTCPeerConnection(pcConfig);
-
-    //Start video
-    pc.ontrack = (event) => {
-        if (remoteVideo.srcObject !== event.streams[0]) {
-            remoteVideo.srcObject = event.streams[0];
-            remoteVideo.play()
-                .then(() => console.log('Remote stream added.'));
-        }
-    };
-
-    pc.onremovestream = (event) => {
-        console.log('Remote stream removed. Event: ', event);
-        remoteVideo.stop();
-    };
-
-    //Handle datachannel messages
-    pc.ondatachannel = (event) => {
-
-        dataChannel = event.channel;
-
-        dataChannel.onopen = () => console.log("Data Channel opened");
-
-        dataChannel.onerror = (err) => console.error("Data Channel Error:", err);
-
-        dataChannel.onmessage = (event) => {
-            //console.log("DataChannel Message:", event.data);
-            processAiyData(JSON.parse(event.data));
-        };
-
-        dataChannel.onclose = () => console.log("The Data Channel is Closed");
-    };
-
-    console.log('Created RTCPeerConnnection');
-
+function gotDataChannel(event) {
+    console.log("Data Channel opened");
+    let receiveChannel = event.channel;
+    receiveChannel.addEventListener('message', event => processAiyData(JSON.parse(event.data)));
+    receiveChannel.addEventListener('error', err => console.error("DataChannel Error:", err));
+    receiveChannel.addEventListener('close', () => console.log("The DataChannel is closed"));
 }
 
 ////////////////////////////////////
@@ -75,8 +42,17 @@ function setupPeerConnection() {
 
 function startCall() {
 
-    //Initialize the peerConnection
-    setupPeerConnection();
+    const pcConfig = {
+        iceServers: [{
+            urls: ["stun:" + signalling_server_address + ":3478"]
+        }]
+    };
+
+    //Setup our peerConnection object
+    pc = new RTCPeerConnection(pcConfig);
+
+    pc.addEventListener('track', gotRemoteStream);
+    pc.addEventListener('datachannel', gotDataChannel);
 
     //Send the call commmand
     let req = {
@@ -116,11 +92,11 @@ function addIceCandidate(candidate) {
     iceCandidates.push(generatedCandidate);
 
     //Add the generated candidates when the remote PeerConnection is ready
-    if (remotePc){
-        iceCandidates.forEach((candidate)=>
+    if (remotePc) {
+        iceCandidates.forEach((candidate) =>
             pc.addIceCandidate(candidate)
                 .then(onAddIceCandidateSuccess, onAddIceCandidateError)
-            );
+        );
         console.log("Added " + iceCandidates.length + " remote candidate(s)");
         iceCandidates = [];
     }
@@ -132,8 +108,8 @@ function offerAnswer(remoteSdp) {
     //Start the answer by setting the remote SDP
     pc.setRemoteDescription(new RTCSessionDescription(remoteSdp))
         .then(() => {
-            remotePc = true;
-            console.log("setRemoteDescription complete")
+                remotePc = true;
+                console.log("setRemoteDescription complete")
             },
             (err) => console.error("Failed to setRemoteDescription: " + err));
 
@@ -194,8 +170,7 @@ function websocketEvents() {
             case "iceCandidate":
                 if (!message.data) {
                     console.log("Ice Gathering Complete");
-                }
-                else
+                } else
                     addIceCandidate(JSON.parse(message.data));
                 break;
 
@@ -247,21 +222,14 @@ window.onbeforeunload = () => {
 
 document.addEventListener("DOMContentLoaded", () => {
 
-    remoteVideo = document.querySelector('#remoteVideo');
-
     websocketEvents();
 
-    remoteVideo.loadend = () => {
-        remoteVideo.addEventListener('loadedmetadata', () => {
-            console.log('Remote video videoWidth: ' + this.videoWidth +
-                'px,  videoHeight: ' + this.videoHeight + 'px');
-        });
+    remoteVideo.addEventListener('loadedmetadata', function () {
+        console.log(`Remote video videoWidth: ${this.videoWidth}px,  videoHeight: ${this.videoHeight}px`);
+    });
 
-
-        remoteVideo.onresize = () => {
-            console.log('Remote video size changed to ' +
-                remoteVideo.videoWidth + 'x' + remoteVideo.videoHeight);
-        };
-    };
+    remoteVideo.addEventListener('resize', () => {
+        console.log(`Remote video size changed to ${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`);
+    });
 
 });
