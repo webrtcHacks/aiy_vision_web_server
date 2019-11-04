@@ -23,8 +23,7 @@ from aiy_model_output import model_selector, process_inference
 import picam_record as record
 
 # AIY requirements
-from aiy.leds import Leds
-from aiy.leds import PrivacyLed
+from aiy.vision.leds import Leds,PrivacyLed
 from aiy.vision.inference import CameraInference, ImageInference
 
 
